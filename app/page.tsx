@@ -850,6 +850,10 @@ export default function Home() {
       JSON.stringify(workoutTemplates)
     );
     localStorage.setItem(STORAGE_KEYS.logs, JSON.stringify(workoutLogs));
+    localStorage.setItem(
+      STORAGE_KEYS.activity,
+      JSON.stringify(activityLogs)
+    );
     localStorage.setItem(STORAGE_KEYS.points, JSON.stringify(points));
     localStorage.setItem(STORAGE_KEYS.coupons, JSON.stringify(coupons));
     localStorage.setItem(
@@ -858,15 +862,22 @@ export default function Home() {
     );
     localStorage.setItem(STORAGE_KEYS.bonus, JSON.stringify(bonusState));
     localStorage.setItem(STORAGE_KEYS.water, JSON.stringify(waterLogs));
+    if (lastLogin) {
+      localStorage.setItem(STORAGE_KEYS.lastLogin, lastLogin);
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.lastLogin);
+    }
   }, [
     name,
     workoutTemplates,
     workoutLogs,
+    activityLogs,
     points,
     coupons,
     achievements,
     bonusState,
     waterLogs,
+    lastLogin,
     hydrated
   ]);
 
@@ -917,17 +928,50 @@ export default function Home() {
     const workoutPoints = workoutLogs
       .filter((workout) => new Date(workout.date) >= weekAgo)
       .reduce((sum, workout) => sum + workout.pointsEarned, 0);
+    const activityPoints = activityLogs
+      .filter((log) => new Date(log.date) >= weekAgo)
+      .reduce((sum, log) => sum + log.pointsEarned, 0);
     const waterPoints = waterLogs.filter(
       (log) => new Date(log.date) >= weekAgo
     ).length * 5;
-    return workoutPoints + waterPoints;
-  }, [workoutLogs, waterLogs]);
+    return workoutPoints + activityPoints + waterPoints;
+  }, [workoutLogs, activityLogs, waterLogs]);
 
-  const recentWorkouts = workoutLogs.slice(0, 3);
+  const recentActivity = useMemo(() => {
+    const combined = [
+      ...workoutLogs.map((log) => ({
+        id: log.id,
+        date: log.date,
+        label: log.templateName,
+        points: log.pointsEarned,
+        emoji: activityEmoji.gym
+      })),
+      ...activityLogs.map((log) => ({
+        id: log.id,
+        date: log.date,
+        label: log.label,
+        points: log.pointsEarned,
+        emoji: activityEmoji[log.kind]
+      }))
+    ];
+
+    return combined
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, 3);
+  }, [workoutLogs, activityLogs]);
   const todayKey = new Date().toDateString();
   const todayWaterMl = waterLogs
     .filter((log) => new Date(log.date).toDateString() === todayKey)
     .reduce((sum, log) => sum + log.amountMl, 0);
+  const hasLoggedToday = useMemo(() => {
+    const activityToday = activityLogs.some(
+      (log) => new Date(log.date).toDateString() === todayKey
+    );
+    const workoutToday = workoutLogs.some(
+      (log) => new Date(log.date).toDateString() === todayKey
+    );
+    return activityToday || workoutToday;
+  }, [activityLogs, workoutLogs, todayKey]);
 
   const openTemplateModal = (template?: WorkoutTemplate) => {
     if (template) {
@@ -1123,6 +1167,11 @@ export default function Home() {
     handleAchievementCheck(filtered, points, coupons, waterLogs);
   };
 
+  const deleteActivityLog = (id: string) => {
+    const filtered = activityLogs.filter((log) => log.id !== id);
+    setActivityLogs(filtered);
+  };
+
   const logWater = (amountMl: number) => {
     const entry: WaterLog = {
       id: crypto.randomUUID(),
@@ -1140,6 +1189,27 @@ export default function Home() {
     setPointsToast(bonusPoints);
     setTimeout(() => setPointsToast(null), 1200);
     handleAchievementCheck(workoutLogs, nextPoints, coupons, updatedWater);
+  };
+
+  const logQuickActivity = (option: (typeof activityOptions)[number]) => {
+    const entry: ActivityLog = {
+      id: crypto.randomUUID(),
+      date: new Date().toISOString(),
+      kind: option.kind,
+      label: option.label,
+      pointsEarned: option.points
+    };
+    const updated = [entry, ...activityLogs];
+    setActivityLogs(updated);
+    const nextPoints = {
+      total: points.total + option.points,
+      lifetime: points.lifetime + option.points
+    };
+    setPoints(nextPoints);
+    setPointsToast(option.points);
+    setTimeout(() => setPointsToast(null), 1200);
+    handleAchievementCheck(workoutLogs, nextPoints, coupons, waterLogs);
+    setActivityModalOpen(false);
   };
 
   const confirmRedeem = (coupon: Coupon) => {
@@ -1195,11 +1265,14 @@ export default function Home() {
 
     setWorkoutTemplates([]);
     setWorkoutLogs([]);
+    setActivityLogs([]);
     setPoints({ total: 0, lifetime: 0 });
     setCoupons(defaultCoupons);
     setAchievements(defaultAchievements);
     setBonusState({ streakBonusClaimed: false });
     setWaterLogs([]);
+    setLastLogin(null);
+    localStorage.removeItem(STORAGE_KEYS.activity);
     localStorage.removeItem(STORAGE_KEYS.lastLogin);
   };
 
@@ -1303,36 +1376,71 @@ export default function Home() {
                   </button>
                 </div>
                 <div className="mt-4 space-y-3">
-                  {recentWorkouts.length === 0 && (
+                  {recentActivity.length === 0 && (
                     <p className="text-sm text-[color:var(--muted)]">
-                      Your next gym session will show up here.
+                      Your next activity will show up here.
                     </p>
                   )}
-                  {recentWorkouts.map((workout) => (
+                  {recentActivity.map((entry) => (
                     <div
-                      key={workout.id}
+                      key={entry.id}
                       className="flex items-center justify-between p-3 rounded-xl bg-white/70"
                     >
-                      <div>
-                        <p className="font-semibold">{workout.templateName}</p>
-                        <p className="text-xs text-[color:var(--muted)]">
-                          {formatDate(workout.date)}
-                        </p>
+                      <div className="flex items-center gap-3">
+                        <span className="text-lg">{entry.emoji}</span>
+                        <div>
+                          <p className="font-semibold">{entry.label}</p>
+                          <p className="text-xs text-[color:var(--muted)]">
+                            {formatDate(entry.date)}
+                          </p>
+                        </div>
                       </div>
                       <div className="text-sm text-[color:var(--accent-strong)]">
-                        +{workout.pointsEarned} pts
+                        +{entry.points} pts
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
 
-              <button
-                className="w-full rounded-full bg-[color:var(--accent-strong)] text-white py-4 font-semibold shadow-soft active:scale-[0.98] transition"
-                onClick={() => setActiveTab("workouts")}
-              >
-                Log Gym Visit
-              </button>
+              <div className="glass-card rounded-2xl p-5 shadow-soft">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-lg font-display">Quest board</h2>
+                    <p className="text-xs text-[color:var(--muted)]">
+                      Daily quest: log any activity
+                    </p>
+                  </div>
+                  <div className="mascot glow-pulse">\u2728</div>
+                </div>
+                <div className="mt-4 flex items-center justify-between rounded-2xl bg-white/70 px-4 py-3">
+                  <div>
+                    <p className="text-sm font-semibold">
+                      {hasLoggedToday ? "Quest cleared" : "Quest pending"}
+                    </p>
+                    <p className="text-xs text-[color:var(--muted)]">
+                      {hasLoggedToday ? "Streak protected" : "Earn points today"}
+                    </p>
+                  </div>
+                  <span className="text-2xl">
+                    {hasLoggedToday ? "\ud83c\udf89" : "\ud83c\udfaf"}
+                  </span>
+                </div>
+                <div className="mt-4 grid gap-3">
+                  <button
+                    className="quest-button w-full rounded-full bg-[color:var(--accent-strong)] text-white py-4 font-semibold shadow-soft active:scale-[0.98] transition"
+                    onClick={() => setActivityModalOpen(true)}
+                  >
+                    Choose activity to log
+                  </button>
+                  <button
+                    className="w-full rounded-full border border-[color:var(--accent-strong)] py-3 text-sm font-semibold"
+                    onClick={() => setActiveTab("workouts")}
+                  >
+                    Manage gym routines
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -1458,6 +1566,46 @@ export default function Home() {
                       <button
                         className="mt-3 text-xs text-[color:var(--rose)]"
                         onClick={() => deleteLog(log.id)}
+                      >
+                        Remove log
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="glass-card rounded-2xl p-5 shadow-soft">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-display">Quick activity logs</h3>
+                  <span className="text-xs text-[color:var(--muted)]">
+                    {activityLogs.length} total
+                  </span>
+                </div>
+                <div className="mt-4 space-y-3">
+                  {activityLogs.length === 0 && (
+                    <p className="text-sm text-[color:var(--muted)]">
+                      Log a reading, study, walk, or stretch session.
+                    </p>
+                  )}
+                  {activityLogs.slice(0, 6).map((log) => (
+                    <div key={log.id} className="rounded-xl bg-white/70 p-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg">{activityEmoji[log.kind]}</span>
+                          <div>
+                            <p className="font-semibold">{log.label}</p>
+                            <p className="text-xs text-[color:var(--muted)]">
+                              {formatDate(log.date)}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-xs text-[color:var(--accent-strong)]">
+                          +{log.pointsEarned} pts
+                        </div>
+                      </div>
+                      <button
+                        className="mt-3 text-xs text-[color:var(--rose)]"
+                        onClick={() => deleteActivityLog(log.id)}
                       >
                         Remove log
                       </button>
@@ -1683,6 +1831,98 @@ export default function Home() {
           />
         </div>
       </nav>
+
+      {activityModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center p-4 modal-backdrop">
+          <div className="w-full max-w-[420px] rounded-3xl bg-[color:var(--card-strong)] p-5 shadow-soft slide-up">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-display">Log an activity</h3>
+              <button
+                className="text-sm"
+                onClick={() => setActivityModalOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-4 max-h-[70vh] overflow-y-auto scroll-hidden">
+              <div className="rounded-2xl bg-white/70 p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold">Gym workout</p>
+                    <p className="text-xs text-[color:var(--muted)]">
+                      Use a saved routine
+                    </p>
+                  </div>
+                  <span className="text-2xl">\ud83c\udfcb\ufe0f</span>
+                </div>
+                {workoutTemplates.length > 0 ? (
+                  <div className="mt-3 grid gap-2">
+                    {workoutTemplates.slice(0, 3).map((template) => (
+                      <button
+                        key={`quick-${template.id}`}
+                        className="w-full rounded-full bg-white/90 px-3 py-2 text-xs font-semibold text-left"
+                        onClick={() => {
+                          openLogModal(template);
+                          setActivityModalOpen(false);
+                        }}
+                      >
+                        Log {template.name}
+                      </button>
+                    ))}
+                    <button
+                      className="w-full rounded-full border border-[color:var(--accent-strong)] px-3 py-2 text-xs font-semibold"
+                      onClick={() => {
+                        setActiveTab("workouts");
+                        setActivityModalOpen(false);
+                      }}
+                    >
+                      View all routines
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    className="mt-3 w-full rounded-full border border-[color:var(--accent-strong)] px-3 py-2 text-xs font-semibold"
+                    onClick={() => {
+                      setActiveTab("workouts");
+                      setActivityModalOpen(false);
+                    }}
+                  >
+                    Create a routine first
+                  </button>
+                )}
+              </div>
+
+              <div className="grid gap-3">
+                {activityOptions.map((option) => (
+                  <button
+                    key={option.kind}
+                    className="rounded-2xl bg-white/80 p-4 text-left shadow-soft active:scale-[0.98] transition"
+                    onClick={() => logQuickActivity(option)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-semibold">
+                          {option.label}
+                        </p>
+                        <p className="text-xs text-[color:var(--muted)]">
+                          {option.description}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl">{option.emoji}</div>
+                        <p className="text-xs text-[color:var(--accent-strong)]">
+                          +{option.points} pts
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {templateModalOpen && (
         <div className="fixed inset-0 z-50 flex items-end justify-center p-4 modal-backdrop">
