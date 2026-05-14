@@ -63,7 +63,7 @@ type WaterLog = {
   amountMl: number;
 };
 
-type ActivityKind = "reading" | "study" | "walk" | "gym" | "stretch";
+type ActivityKind = "reading" | "study" | "walk" | "gym" | "stretch" | "supplements";
 
 type ActivityLog = {
   id: string;
@@ -116,7 +116,7 @@ const defaultCoupons: Coupon[] = [
     id: "coupon-1",
     title: "Movie night of your choice",
     description: "Pick the film, I bring the snacks.",
-    cost: 200,
+    cost: 420,
     emoji: "\ud83c\udfac",
     category: "fun",
     redeemed: false,
@@ -126,7 +126,7 @@ const defaultCoupons: Coupon[] = [
     id: "coupon-2",
     title: "Breakfast in bed",
     description: "Lazy morning with pancakes and kisses.",
-    cost: 150,
+    cost: 320,
     emoji: "\ud83c\udf73",
     category: "food",
     redeemed: false,
@@ -136,7 +136,7 @@ const defaultCoupons: Coupon[] = [
     id: "coupon-3",
     title: "30-min massage",
     description: "Soft music, warm hands, full relaxation.",
-    cost: 300,
+    cost: 640,
     emoji: "\ud83d\udc86",
     category: "relax",
     redeemed: false,
@@ -146,7 +146,7 @@ const defaultCoupons: Coupon[] = [
     id: "coupon-4",
     title: "Pizza & Netflix night",
     description: "Comfort food, cozy blanket, your pick.",
-    cost: 100,
+    cost: 260,
     emoji: "\ud83c\udf55",
     category: "food",
     redeemed: false,
@@ -156,7 +156,7 @@ const defaultCoupons: Coupon[] = [
     id: "coupon-5",
     title: "Shopping trip (budget: 50\u20ac)",
     description: "We go on a sweet little treasure hunt.",
-    cost: 500,
+    cost: 900,
     emoji: "\ud83d\uded2",
     category: "adventure",
     redeemed: false,
@@ -166,7 +166,7 @@ const defaultCoupons: Coupon[] = [
     id: "coupon-6",
     title: "Weekend trip surprise",
     description: "Pack a bag and trust me.",
-    cost: 1000,
+    cost: 1800,
     emoji: "\ud83c\udf05",
     category: "adventure",
     redeemed: false,
@@ -176,7 +176,7 @@ const defaultCoupons: Coupon[] = [
     id: "coupon-7",
     title: "Ice cream date",
     description: "Two spoons, one sundae.",
-    cost: 75,
+    cost: 220,
     emoji: "\ud83c\udf66",
     category: "fun",
     redeemed: false,
@@ -186,7 +186,7 @@ const defaultCoupons: Coupon[] = [
     id: "coupon-8",
     title: "Love letter handwritten by me",
     description: "A small envelope full of all the feels.",
-    cost: 50,
+    cost: 180,
     emoji: "\ud83d\udc8c",
     category: "relax",
     redeemed: false,
@@ -347,6 +347,13 @@ const activityOptions: Array<{
     description: "Mobility recharge",
     points: 15,
     emoji: "\ud83e\udd38"
+  },
+  {
+    kind: "supplements",
+    label: "Take supplements",
+    description: "Daily stack complete",
+    points: 10,
+    emoji: "\ud83d\udc8a"
   }
 ];
 
@@ -355,7 +362,8 @@ const activityEmoji: Record<ActivityKind, string> = {
   study: "\ud83e\udd13",
   walk: "\ud83c\udf3f",
   gym: "\ud83c\udfcb\ufe0f",
-  stretch: "\ud83e\udd38"
+  stretch: "\ud83e\udd38",
+  supplements: "\ud83d\udc8a"
 };
 
 const formatDate = (iso: string) =>
@@ -431,6 +439,13 @@ export default function Home() {
   const [waterLogs, setWaterLogs] = useState<WaterLog[]>([]);
   const [lastLogin, setLastLogin] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const [waterEditTarget, setWaterEditTarget] = useState<WaterLog | null>(null);
+  const [waterEditAmount, setWaterEditAmount] = useState(250);
+  const [activityPopupOpen, setActivityPopupOpen] = useState(false);
+  const [activityEditTarget, setActivityEditTarget] =
+    useState<ActivityLog | null>(null);
+  const [activityEditLabel, setActivityEditLabel] = useState("");
+  const [activityEditPoints, setActivityEditPoints] = useState(0);
 
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [templateDraft, setTemplateDraft] = useState<WorkoutTemplate>(
@@ -937,6 +952,20 @@ export default function Home() {
     return workoutPoints + activityPoints + waterPoints;
   }, [workoutLogs, activityLogs, waterLogs]);
 
+  const level = Math.floor(points.lifetime / 200) + 1;
+  const levelProgress = (points.lifetime % 200) / 200;
+  const nextLevelIn = 200 - (points.lifetime % 200);
+  const nextReward = useMemo(() => {
+    const available = coupons
+      .filter((coupon) => !coupon.redeemed)
+      .sort((a, b) => a.cost - b.cost);
+    return available[0] ?? null;
+  }, [coupons]);
+
+  const nextRewardIn = nextReward
+    ? Math.max(0, nextReward.cost - points.total)
+    : null;
+
   const recentActivity = useMemo(() => {
     const combined = [
       ...workoutLogs.map((log) => ({
@@ -944,14 +973,16 @@ export default function Home() {
         date: log.date,
         label: log.templateName,
         points: log.pointsEarned,
-        emoji: activityEmoji.gym
+        emoji: activityEmoji.gym,
+        type: "workout" as const
       })),
       ...activityLogs.map((log) => ({
         id: log.id,
         date: log.date,
         label: log.label,
         points: log.pointsEarned,
-        emoji: activityEmoji[log.kind]
+        emoji: activityEmoji[log.kind],
+        type: "activity" as const
       }))
     ];
 
@@ -959,7 +990,46 @@ export default function Home() {
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
       .slice(0, 3);
   }, [workoutLogs, activityLogs]);
+  const activityPopupEntries = useMemo(() => {
+    const combined = [
+      ...workoutLogs.map((log) => ({
+        id: log.id,
+        date: log.date,
+        label: log.templateName,
+        points: log.pointsEarned,
+        emoji: activityEmoji.gym,
+        type: "workout" as const
+      })),
+      ...activityLogs.map((log) => ({
+        id: log.id,
+        date: log.date,
+        label: log.label,
+        points: log.pointsEarned,
+        emoji: activityEmoji[log.kind],
+        type: "activity" as const
+      })),
+      ...waterLogs.map((log) => ({
+        id: log.id,
+        date: log.date,
+        label: `${log.amountMl} ml water`,
+        points: 5,
+        emoji: "\ud83d\udca7",
+        type: "water" as const
+      }))
+    ];
+
+    return combined
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, 12);
+  }, [workoutLogs, activityLogs, waterLogs]);
   const todayKey = new Date().toDateString();
+  const todayWaterLogs = useMemo(
+    () =>
+      waterLogs.filter(
+        (log) => new Date(log.date).toDateString() === todayKey
+      ),
+    [waterLogs, todayKey]
+  );
   const todayWaterMl = waterLogs
     .filter((log) => new Date(log.date).toDateString() === todayKey)
     .reduce((sum, log) => sum + log.amountMl, 0);
@@ -1114,21 +1184,79 @@ export default function Home() {
     }
 
     const logIso = new Date(logDate).toISOString();
+    const createWorkoutLog = (
+      template: WorkoutTemplate,
+      isoDate: string,
+      notes: string
+    ) => {
+      const basePoints = 50;
+      const exerciseBonus = template.exercises.length * 10;
+      const isFirstToday = !workoutLogs.some((log) =>
+        isSameDay(log.date, isoDate)
+      );
+      const dailyBonus = isFirstToday ? 25 : 0;
+
+      let streakBonus = 0;
+      const newLog: WorkoutLog = {
+        id: crypto.randomUUID(),
+        date: isoDate,
+        templateId: template.id,
+        templateName: template.name,
+        exercises: template.exercises,
+        notes,
+        pointsEarned: 0
+      };
+
+      const updatedLogs = [newLog, ...workoutLogs];
+      const newStreak = calculateStreak(updatedLogs);
+      if (newStreak >= 7 && !bonusState.streakBonusClaimed) {
+        streakBonus = 100;
+      }
+
+      const pointsEarned =
+        basePoints + exerciseBonus + dailyBonus + streakBonus;
+      newLog.pointsEarned = pointsEarned;
+
+      setWorkoutLogs(updatedLogs);
+      const nextPoints = {
+        total: points.total + pointsEarned,
+        lifetime: points.lifetime + pointsEarned
+      };
+      setPoints(nextPoints);
+
+      setPointsToast(pointsEarned);
+      setTimeout(() => setPointsToast(null), 1400);
+
+      if (newStreak < 7) {
+        setBonusState({ streakBonusClaimed: false });
+      } else if (streakBonus > 0) {
+        setBonusState({ streakBonusClaimed: true });
+      }
+
+      handleAchievementCheck(updatedLogs, nextPoints, coupons, waterLogs);
+    };
+
+    createWorkoutLog(logTarget, logIso, logNotes);
+    closeLogModal();
+  };
+
+  const logWorkoutQuick = (template: WorkoutTemplate) => {
+    const isoDate = new Date().toISOString();
     const basePoints = 50;
-    const exerciseBonus = logTarget.exercises.length * 10;
+    const exerciseBonus = template.exercises.length * 10;
     const isFirstToday = !workoutLogs.some((log) =>
-      isSameDay(log.date, logIso)
+      isSameDay(log.date, isoDate)
     );
     const dailyBonus = isFirstToday ? 25 : 0;
 
     let streakBonus = 0;
     const newLog: WorkoutLog = {
       id: crypto.randomUUID(),
-      date: logIso,
-      templateId: logTarget.id,
-      templateName: logTarget.name,
-      exercises: logTarget.exercises,
-      notes: logNotes,
+      date: isoDate,
+      templateId: template.id,
+      templateName: template.name,
+      exercises: template.exercises,
+      notes: "",
       pointsEarned: 0
     };
 
@@ -1158,7 +1286,6 @@ export default function Home() {
     }
 
     handleAchievementCheck(updatedLogs, nextPoints, coupons, waterLogs);
-    closeLogModal();
   };
 
   const deleteLog = (id: string) => {
@@ -1191,6 +1318,26 @@ export default function Home() {
     handleAchievementCheck(workoutLogs, nextPoints, coupons, updatedWater);
   };
 
+  const openWaterEdit = (log: WaterLog) => {
+    setWaterEditTarget(log);
+    setWaterEditAmount(log.amountMl);
+  };
+
+  const saveWaterEdit = () => {
+    if (!waterEditTarget) {
+      return;
+    }
+    const nextAmount = Math.max(50, Math.round(waterEditAmount));
+    setWaterLogs((prev) =>
+      prev.map((log) =>
+        log.id === waterEditTarget.id
+          ? { ...log, amountMl: nextAmount }
+          : log
+      )
+    );
+    setWaterEditTarget(null);
+  };
+
   const logQuickActivity = (option: (typeof activityOptions)[number]) => {
     const entry: ActivityLog = {
       id: crypto.randomUUID(),
@@ -1210,6 +1357,32 @@ export default function Home() {
     setTimeout(() => setPointsToast(null), 1200);
     handleAchievementCheck(workoutLogs, nextPoints, coupons, waterLogs);
     setActivityModalOpen(false);
+  };
+
+  const openActivityEdit = (log: ActivityLog) => {
+    setActivityEditTarget(log);
+    setActivityEditLabel(log.label);
+    setActivityEditPoints(log.pointsEarned);
+  };
+
+  const saveActivityEdit = () => {
+    if (!activityEditTarget) {
+      return;
+    }
+    const nextLabel = activityEditLabel.trim();
+    const nextPoints = Math.max(0, Math.round(activityEditPoints));
+    setActivityLogs((prev) =>
+      prev.map((log) =>
+        log.id === activityEditTarget.id
+          ? {
+              ...log,
+              label: nextLabel || log.label,
+              pointsEarned: nextPoints
+            }
+          : log
+      )
+    );
+    setActivityEditTarget(null);
   };
 
   const confirmRedeem = (coupon: Coupon) => {
@@ -1284,8 +1457,17 @@ export default function Home() {
             <div>
               <p className="text-sm text-[color:var(--muted)]">Hello,</p>
               <h1 className="text-2xl font-display">{name}</h1>
+              <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-white/70 px-3 py-1 text-xs">
+                <span className="font-semibold">Level {level}</span>
+                <span className="text-[color:var(--muted)]">
+                  {nextLevelIn} XP to next
+                </span>
+              </div>
             </div>
-            <div className="text-right">
+            <button
+              className="text-right"
+              onClick={() => setActivityPopupOpen(true)}
+            >
               <p className="text-xs uppercase tracking-[0.2em] text-[color:var(--muted)]">
                 Balance
               </p>
@@ -1293,6 +1475,18 @@ export default function Home() {
                 {animatedPoints}
                 <span className="text-sm font-body ml-1">pts</span>
               </div>
+            </button>
+          </div>
+          <div className="mt-4 rounded-2xl bg-white/70 p-3">
+            <div className="flex items-center justify-between text-xs text-[color:var(--muted)]">
+              <span>Quest XP</span>
+              <span>{Math.round(levelProgress * 100)}%</span>
+            </div>
+            <div className="mt-2 h-2 rounded-full bg-white/70">
+              <div
+                className="h-2 rounded-full bg-[color:var(--accent-strong)] transition-all"
+                style={{ width: `${levelProgress * 100}%` }}
+              />
             </div>
           </div>
         </section>
@@ -1335,10 +1529,20 @@ export default function Home() {
                 </div>
                 <div className="glass-card rounded-2xl p-4 shadow-soft">
                   <p className="text-xs text-[color:var(--muted)]">Next reward</p>
-                  <p className="text-2xl font-display">
-                    {Math.max(0, 500 - points.total)}
-                  </p>
-                  <p className="text-xs text-[color:var(--muted)]">To 500 pts</p>
+                  {nextReward ? (
+                    <>
+                      <p className="text-sm font-semibold">
+                        {nextReward.title}
+                      </p>
+                      <p className="text-xs text-[color:var(--muted)]">
+                        {nextRewardIn} pts to unlock
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-sm text-[color:var(--muted)]">
+                      All rewards claimed
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -1363,41 +1567,24 @@ export default function Home() {
                     </button>
                   ))}
                 </div>
-              </div>
-
-              <div className="glass-card rounded-2xl p-5 shadow-soft">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-display">Recent activity</h2>
-                  <button
-                    className="text-sm text-[color:var(--accent-strong)]"
-                    onClick={() => setActiveTab("workouts")}
-                  >
-                    View all
-                  </button>
-                </div>
-                <div className="mt-4 space-y-3">
-                  {recentActivity.length === 0 && (
-                    <p className="text-sm text-[color:var(--muted)]">
-                      Your next activity will show up here.
+                <div className="mt-4 space-y-2">
+                  {todayWaterLogs.length === 0 && (
+                    <p className="text-xs text-[color:var(--muted)]">
+                      Log your first glass to start the hydration streak.
                     </p>
                   )}
-                  {recentActivity.map((entry) => (
+                  {todayWaterLogs.slice(0, 3).map((log) => (
                     <div
-                      key={entry.id}
-                      className="flex items-center justify-between p-3 rounded-xl bg-white/70"
+                      key={log.id}
+                      className="flex items-center justify-between rounded-xl bg-white/80 px-3 py-2 text-xs"
                     >
-                      <div className="flex items-center gap-3">
-                        <span className="text-lg">{entry.emoji}</span>
-                        <div>
-                          <p className="font-semibold">{entry.label}</p>
-                          <p className="text-xs text-[color:var(--muted)]">
-                            {formatDate(entry.date)}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-sm text-[color:var(--accent-strong)]">
-                        +{entry.points} pts
-                      </div>
+                      <span>{log.amountMl} ml</span>
+                      <button
+                        className="text-[color:var(--accent-strong)]"
+                        onClick={() => openWaterEdit(log)}
+                      >
+                        Edit
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -1411,7 +1598,7 @@ export default function Home() {
                       Daily quest: log any activity
                     </p>
                   </div>
-                  <div className="mascot glow-pulse">\u2728</div>
+                  <div className="mascot glow-pulse">{"\u2728"}</div>
                 </div>
                 <div className="mt-4 flex items-center justify-between rounded-2xl bg-white/70 px-4 py-3">
                   <div>
@@ -1513,6 +1700,12 @@ export default function Home() {
                         Log visit
                       </button>
                       <button
+                        className="flex-1 rounded-full bg-white/80 px-3 py-2 text-sm font-semibold"
+                        onClick={() => logWorkoutQuick(template)}
+                      >
+                        Quick log
+                      </button>
+                      <button
                         className="flex-1 rounded-full border border-[color:var(--accent-strong)] px-3 py-2 text-sm font-semibold"
                         onClick={() => openTemplateModal(template)}
                       >
@@ -1574,45 +1767,6 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="glass-card rounded-2xl p-5 shadow-soft">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-display">Quick activity logs</h3>
-                  <span className="text-xs text-[color:var(--muted)]">
-                    {activityLogs.length} total
-                  </span>
-                </div>
-                <div className="mt-4 space-y-3">
-                  {activityLogs.length === 0 && (
-                    <p className="text-sm text-[color:var(--muted)]">
-                      Log a reading, study, walk, or stretch session.
-                    </p>
-                  )}
-                  {activityLogs.slice(0, 6).map((log) => (
-                    <div key={log.id} className="rounded-xl bg-white/70 p-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="text-lg">{activityEmoji[log.kind]}</span>
-                          <div>
-                            <p className="font-semibold">{log.label}</p>
-                            <p className="text-xs text-[color:var(--muted)]">
-                              {formatDate(log.date)}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="text-xs text-[color:var(--accent-strong)]">
-                          +{log.pointsEarned} pts
-                        </div>
-                      </div>
-                      <button
-                        className="mt-3 text-xs text-[color:var(--rose)]"
-                        onClick={() => deleteActivityLog(log.id)}
-                      >
-                        Remove log
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
             </div>
           )}
 
@@ -1870,6 +2024,18 @@ export default function Home() {
                         Log {template.name}
                       </button>
                     ))}
+                    {workoutTemplates.slice(0, 2).map((template) => (
+                      <button
+                        key={`instant-${template.id}`}
+                        className="w-full rounded-full border border-[color:var(--accent-strong)] px-3 py-2 text-xs font-semibold text-left"
+                        onClick={() => {
+                          logWorkoutQuick(template);
+                          setActivityModalOpen(false);
+                        }}
+                      >
+                        Quick log {template.name}
+                      </button>
+                    ))}
                     <button
                       className="w-full rounded-full border border-[color:var(--accent-strong)] px-3 py-2 text-xs font-semibold"
                       onClick={() => {
@@ -1924,6 +2090,148 @@ export default function Home() {
         </div>
       )}
 
+      {activityPopupOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center p-4 modal-backdrop">
+          <div className="w-full max-w-[420px] rounded-3xl bg-[color:var(--card-strong)] p-5 shadow-soft slide-up">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-display">Recent activity</h3>
+              <button
+                className="text-sm"
+                onClick={() => setActivityPopupOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-4 space-y-3 max-h-[60vh] overflow-y-auto scroll-hidden">
+              {activityPopupEntries.length === 0 && (
+                <p className="text-sm text-[color:var(--muted)]">
+                  Log a workout or activity to see it here.
+                </p>
+              )}
+              {activityPopupEntries.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="flex items-center justify-between rounded-xl bg-white/70 p-3"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-lg">{entry.emoji}</span>
+                    <div>
+                      <p className="font-semibold">{entry.label}</p>
+                      <p className="text-xs text-[color:var(--muted)]">
+                        {formatDate(entry.date)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {entry.type === "activity" && (
+                      <>
+                        <button
+                          className="text-xs text-[color:var(--accent-strong)]"
+                          onClick={() => {
+                            const log = activityLogs.find(
+                              (item) => item.id === entry.id
+                            );
+                            if (log) {
+                              openActivityEdit(log);
+                            }
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="text-xs text-[color:var(--rose)]"
+                          onClick={() => deleteActivityLog(entry.id)}
+                        >
+                          Remove
+                        </button>
+                      </>
+                    )}
+                    {entry.type === "water" && (
+                      <>
+                        <button
+                          className="text-xs text-[color:var(--accent-strong)]"
+                          onClick={() => {
+                            const log = waterLogs.find(
+                              (item) => item.id === entry.id
+                            );
+                            if (log) {
+                              openWaterEdit(log);
+                            }
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="text-xs text-[color:var(--rose)]"
+                          onClick={() =>
+                            setWaterLogs((prev) =>
+                              prev.filter((log) => log.id !== entry.id)
+                            )
+                          }
+                        >
+                          Remove
+                        </button>
+                      </>
+                    )}
+                    <span className="text-sm text-[color:var(--accent-strong)]">
+                      +{entry.points} pts
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activityEditTarget && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center p-4 modal-backdrop">
+          <div className="w-full max-w-[420px] rounded-3xl bg-[color:var(--card-strong)] p-5 shadow-soft slide-up">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-display">Edit activity</h3>
+              <button
+                className="text-sm"
+                onClick={() => setActivityEditTarget(null)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-4 space-y-4">
+              <div>
+                <label className="text-xs text-[color:var(--muted)]">
+                  Label
+                </label>
+                <input
+                  className="mt-2 w-full rounded-xl bg-white/70 px-3 py-2 text-sm"
+                  value={activityEditLabel}
+                  onChange={(event) => setActivityEditLabel(event.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-[color:var(--muted)]">
+                  Points
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  className="mt-2 w-full rounded-xl bg-white/70 px-3 py-2 text-sm"
+                  value={activityEditPoints}
+                  onChange={(event) =>
+                    setActivityEditPoints(Number(event.target.value))
+                  }
+                />
+              </div>
+            </div>
+            <button
+              className="mt-4 w-full rounded-full bg-[color:var(--accent-strong)] text-white py-3 font-semibold"
+              onClick={saveActivityEdit}
+            >
+              Save changes
+            </button>
+          </div>
+        </div>
+      )}
+
       {templateModalOpen && (
         <div className="fixed inset-0 z-50 flex items-end justify-center p-4 modal-backdrop">
           <div className="w-full max-w-[420px] rounded-3xl bg-[color:var(--card-strong)] p-5 shadow-soft slide-up">
@@ -1952,6 +2260,43 @@ export default function Home() {
                     }))
                   }
                 />
+              </div>
+
+              <div>
+                <p className="text-xs text-[color:var(--muted)]">
+                  Quick add exercises
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {[
+                    "Hip thrust",
+                    "Leg press",
+                    "Romanian deadlift",
+                    "Lat pulldown",
+                    "Shoulder press",
+                    "Glute bridge",
+                    "Leg extension",
+                    "Hamstring curl"
+                  ].map((label) => (
+                    <button
+                      key={label}
+                      className="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold"
+                      onClick={() =>
+                        setTemplateDraft((prev) => ({
+                          ...prev,
+                          exercises: [
+                            ...prev.exercises,
+                            {
+                              name: label,
+                              sets: [{ reps: 8, weight: 12, unit: "kg" }]
+                            }
+                          ]
+                        }))
+                      }
+                    >
+                      + {label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="space-y-4">
@@ -2127,10 +2472,49 @@ export default function Home() {
         </div>
       )}
 
+      {waterEditTarget && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center p-4 modal-backdrop">
+          <div className="w-full max-w-[420px] rounded-3xl bg-[color:var(--card-strong)] p-5 shadow-soft slide-up">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-display">Edit water log</h3>
+              <button
+                className="text-sm"
+                onClick={() => setWaterEditTarget(null)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-4">
+              <label className="text-xs text-[color:var(--muted)]">
+                Amount (ml)
+              </label>
+              <input
+                type="number"
+                min={50}
+                step={50}
+                className="mt-2 w-full rounded-xl bg-white/70 px-3 py-2 text-sm"
+                value={waterEditAmount}
+                onChange={(event) =>
+                  setWaterEditAmount(Number(event.target.value))
+                }
+              />
+            </div>
+            <button
+              className="mt-4 w-full rounded-full bg-[color:var(--accent-strong)] text-white py-3 font-semibold"
+              onClick={saveWaterEdit}
+            >
+              Save changes
+            </button>
+          </div>
+        </div>
+      )}
+
       {showNameModal && (
         <div className="fixed inset-0 z-50 flex items-end justify-center p-4 modal-backdrop">
           <div className="w-full max-w-[420px] rounded-3xl bg-[color:var(--card-strong)] p-5 shadow-soft slide-up">
-            <h3 className="text-xl font-display">Welcome, gorgeous \u2728</h3>
+            <h3 className="text-xl font-display">
+              Welcome, gorgeous {"\u2728"}
+            </h3>
             <p className="text-sm text-[color:var(--muted)] mt-2">
               Tell me your name so I can cheer you on.
             </p>
